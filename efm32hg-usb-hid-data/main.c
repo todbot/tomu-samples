@@ -15,7 +15,6 @@
 
 #include <stdio.h>
 
-#define baudrate 115200
 
 // LEUART Rx/Tx Port/Pin Location 
 #define LEUART_LOCATION    0
@@ -24,17 +23,14 @@
 #define LEUART_RXPORT      gpioPortD        // LEUART reception port    
 #define LEUART_RXPIN       5                // LEUART reception pin     
 
+
 #include "callbacks.h"
 #include "descriptors.h"
 
 
-char sbuf[180] = "!";
+char sbuf[150] = "hi!";
+char dbgstr[30];
 
-//int RETARGET_ReadChar()
-//{
-//    return -1;
-//}
-//int RETARGET_WriteChar(int c)
 int write_char(int c)
 {
     while (!(LEUART0->STATUS & LEUART_STATUS_TXBL))
@@ -42,7 +38,6 @@ int write_char(int c)
     LEUART0->TXDATA = (uint32_t)c & 0xffUL;
     return 0;
 }
-
 int write_str(const char *s)
 {
     while (*s)
@@ -51,7 +46,6 @@ int write_str(const char *s)
     write_char('\n');
     return 0;
 }
-
 
 /***************************************************************************//**
  * @brief  Setting up LEUART
@@ -80,7 +74,8 @@ void setupLeuart(void)
 
   /* Configure LEUART */
   init.enable = leuartDisable;
-
+  //init.baudrate = BAUDRATE;
+      
   LEUART_Init(LEUART0, &init);
 
   /* Enable pins at default location */
@@ -153,7 +148,7 @@ typedef struct {
 SL_PACK_END()
 
 static void  *hidDescriptor = NULL;
-static uint32_t  tmpBuffer;
+static uint8_t   inbuff[16]; // FIXME: REPORT_COUNT
 
 // The last keyboard report sent to host. 
 //SL_ALIGN(4)
@@ -169,22 +164,22 @@ int main()
   // Runs the Silicon Labs chip initialisation stuff, that also deals with
   // errata (implements workarounds, etc).
   CHIP_Init();
-
+  
   // Disable the watchdog that the bootloader started.
   WDOG->CTRL = 0;
-
+  
   // Switch on the clock for GPIO. Even though there's no immediately obvious
   // timing stuff going on beyond the SysTick below, it still needs to be
   // enabled for the GPIO to work.
   CMU_ClockEnable(cmuClock_GPIO, true);
-
+  
   // Sets up and enable the `SysTick_Handler' interrupt to fire once every 1ms.
   // ref: http://community.silabs.com/t5/Official-Blog-of-Silicon-Labs/Chapter-5-MCU-Clocking-Part-2-The-SysTick-Interrupt/ba-p/145297
   if (SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 1000)) {
     // Something went wrong.
     while (1);
   }
-
+  
   setupLeuart();
   write_str("startup...\n");
   
@@ -195,10 +190,6 @@ int main()
   // GPIO_PinModeSet(gpioPortA, 0, gpioModeWiredAnd, 0);
   //GPIO_PinModeSet(gpioPortB, 7, gpioModeWiredAnd, 0);
   /*
-#define LED_GREEN_PORT		GPIOF
-#define LED_GREEN_PIN		GPIO4
-#define LED_RED_PORT		GPIOF
-#define LED_RED_PIN		    GPIO5
   */
   GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
   GPIO_PinModeSet(gpioPortF, 5, gpioModePushPull, 0);
@@ -233,10 +224,9 @@ int main()
     // Set the PA0 bit, preventing the FET from sinking to ground and thus
     // switching the green LED off.
     //GPIO_PinOutSet(gpioPortA, 0);
-    SpinDelay(100);
+      //SpinDelay(100);
     write_str(sbuf);
 
-    
     
     // Repeat for the red LED on port PB7, but do so twice so that those that
     // self-assemble their boards can be sure they've got the green and red LEDs
@@ -301,13 +291,18 @@ static int OutputReportReceived(USB_Status_TypeDef status,
                                 uint32_t remaining)
 {
   (void) remaining;
-  (void) status;
-  (void) xferred;
-  //  if ((status           == USB_STATUS_OK)
-  //    && (xferred       == 1)
-  //    && (setReportFunc != NULL) ) {
-  //  setReportFunc( (uint8_t)tmpBuffer);
-  //}
+  //(void) status;
+  //(void) xferred;
+
+  if ((status           == USB_STATUS_OK)
+      && (xferred       == 8) ) {
+      //      && (setReportFunc != NULL) ) {
+      //setReportFunc( (uint8_t)tmpBuffer);
+    sprintf(dbgstr, "%x,%x,%x,%x,%x,%x,%x,%x\n", 
+            inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
+    write_str(dbgstr);
+    GPIO_PinOutSet(gpioPortF, 5);
+  }
 
   return USB_STATUS_OK;
 }
@@ -330,62 +325,75 @@ int setupCmd(const USB_Setup_TypeDef *setup)
 
   int retVal = USB_STATUS_REQ_UNHANDLED;
 
-  //  sprintf(sbuf, "%s\n%x/%x/%x/%x/%x",
-  //        sbuf,setup->Type, setup->Direction, setup->Recipient, setup->bRequest, setup->wValue);
-  
-  GPIO_PinOutSet(gpioPortF, 4);
-  
   //setup->bmRequestType == 0x81) {
-    if (  (setup->Type         == USB_SETUP_TYPE_STANDARD)
-          && (setup->Direction == USB_SETUP_DIR_IN)
-          && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE)    ) {
-
+  if (  (setup->Type         == USB_SETUP_TYPE_STANDARD)
+        && (setup->Direction == USB_SETUP_DIR_IN)
+        && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE)    ) {
+      
       /* A HID device must extend the standard GET_DESCRIPTOR command   */
       /* with support for HID descriptors.                              */
-      switch (setup->bRequest) {
-      case GET_DESCRIPTOR:
-          GPIO_PinOutSet(gpioPortF, 5);
-        /********************/
-        if ( (setup->wValue >> 8) == USB_HID_REPORT_DESCRIPTOR ) {
-          USBD_Write(0, (void*)MyHIDReportDescriptor,
-                     SL_MIN(sizeof(MyHIDReportDescriptor), setup->wLength),
-                     NULL);
-          retVal = USB_STATUS_OK;
-        } else if ( (setup->wValue >> 8) == USB_HID_DESCRIPTOR ) {
-          /* The HID descriptor might be misaligned ! */
-          memcpy(hidDesc, hidDescriptor, USB_HID_DESCSIZE);
-          USBD_Write(0, hidDesc, SL_MIN(USB_HID_DESCSIZE, setup->wLength),
-                     NULL);
-          retVal = USB_STATUS_OK;
-        }
-        break;
+    switch (setup->bRequest) {
+    case GET_DESCRIPTOR:
+      /********************/
+      if ( (setup->wValue >> 8) == USB_HID_REPORT_DESCRIPTOR ) {
+        USBD_Write(0, (void*)MyHIDReportDescriptor,
+                   SL_MIN(sizeof(MyHIDReportDescriptor), setup->wLength),
+                   NULL);
+        retVal = USB_STATUS_OK;
+      } else if ( (setup->wValue >> 8) == USB_HID_DESCRIPTOR ) {
+        /* The HID descriptor might be misaligned ! */
+        memcpy(hidDesc, hidDescriptor, USB_HID_DESCSIZE);
+        USBD_Write(0, hidDesc, SL_MIN(USB_HID_DESCSIZE, setup->wLength),
+                   NULL);
+        retVal = USB_STATUS_OK;
       }
+      break;
+    }
   }
-  else if ( (setup->Type         == USB_SETUP_TYPE_CLASS)
-            && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE)
-            && (setup->wIndex    == HIDKBD_INTERFACE_NO)    ) {
-      // Implement the necessary HID class specific commands.           
-      switch ( setup->bRequest ) {
-      case USB_HID_SET_REPORT:
+  else {
+
+      if ( (setup->Type         == USB_SETUP_TYPE_CLASS)
+           && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE) ) { 
+        //           && (setup->wIndex    == HIDKBD_INTERFACE_NO)    ) {
+
+        // sprintf(sbuf, "%s\n%x/%x/%x/%x/%x",
+        // sbuf,setup->Type, setup->Direction, setup->Recipient, setup->bRequest, setup->wValue);
+        //sprintf(sbuf, "%s\n%x/%x/%x/%x",
+        //        sbuf,setup->wValue>>8, setup->wValue &0xff, setup->wLength, setup->Direction);
+  
+        // Implement the necessary HID class specific commands.           
+        switch ( setup->bRequest ) {
+        case USB_HID_SET_REPORT:           // 0x09, receive data from host
+          
+          GPIO_PinOutSet(gpioPortF, 4);
+  
           // *******************
-          if ( ( (setup->wValue >> 8)      == 2)              // Output report 
-               && ( (setup->wValue & 0xFF) == 0)              // Report ID  
+
+          if ( ( (setup->wValue & 0xFF) == 1)              // Report ID
+               ) {
+    /*
+          if ( ( (setup->wValue >> 8)      == 3)              // FEATURE report 
+               && ( (setup->wValue & 0xFF) == 1)              // Report ID  
                && (setup->wLength          == 1)              // Report length 
-               && (setup->Direction        != USB_SETUP_DIR_IN)    ) {
-              USBD_Read(0, (void*)&tmpBuffer, 1, OutputReportReceived);
-              retVal = USB_STATUS_OK;
+               && (setup->Direction        != USB_SETUP_DIR_OUT)    ) { // 
+    */
+
+            USBD_Read(0, (void*)&inbuff, 8, OutputReportReceived);
+            retVal = USB_STATUS_OK;
           }
           break;
-          
-      case USB_HID_GET_REPORT:
+        case USB_HID_GET_REPORT:           // 0x01, send data to host
+
+
           // ********************
-          if ( ( (setup->wValue >> 8)       == 1)             // Input report  
-               && ( (setup->wValue & 0xFF)  == 0)             // Report ID     
-               && (setup->wLength           == 8)             // Report length 
-               && (setup->Direction         == USB_SETUP_DIR_IN)    ) {
-              USBD_Write( EP_IN, &lastKnownReport, sizeof(HIDReport_t), NULL);
-              
-              retVal = USB_STATUS_OK;
+          if ( ( (setup->wValue >> 8)       == 3)             // FEATURE report  
+               && ( (setup->wValue & 0xFF)  == 1)             // Report ID     
+               //               && (setup->wLength           == 8)             // Report length 
+               //               && (setup->Direction         == USB_SETUP_DIR_IN)    ) {
+               ) {
+            
+            USBD_Write( EP_IN, &lastKnownReport, sizeof(HIDReport_t), NULL);
+            retVal = USB_STATUS_OK;
           }
           break;
           
@@ -418,8 +426,10 @@ int setupCmd(const USB_Setup_TypeDef *setup)
         }
         break;
 */
-      }
-  }
+        } // swtich bRequest
+        
+      } // if
+  } // else
 
 
    
