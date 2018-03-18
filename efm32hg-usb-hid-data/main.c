@@ -213,19 +213,11 @@ int main()
 
   // Blink infinitely, in an aviation-like pattern.
   while (1) {
-    // Clear the PA0 bit, allowing the FET to sink to ground and thus lighting
-    // up the green LED.
-    //GPIO_PinOutClear(gpioPortA, 0);
-      //SpinDelay(100);
 
-    // Set the PA0 bit, preventing the FET from sinking to ground and thus
-    // switching the green LED off.
-    //GPIO_PinOutSet(gpioPortA, 0);
-      //SpinDelay(100);
     write_str(sbuf);
 
-   SpinDelay(500);
-
+    SpinDelay(500);
+   
     /*
     // Capture/sample the state of the capacitive touch sensors.
     CAPSENSE_Sense();
@@ -283,14 +275,14 @@ static int OutputReportReceived(USB_Status_TypeDef status,
     sprintf(dbgstr, "%x,%x,%x,%x,%x,%x,%x,%x\n", 
             inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
     write_str(dbgstr);
-    GPIO_PinOutSet(gpioPortF, 5);
     uint8_t cmd = inbuff[1];
 
     // 1, 76, 0, 0, ...
     if( cmd == 'v' ) {
+      GPIO_PinOutSet(gpioPortF, 5);
       memcpy( (void*)reportToSend, (void*)inbuff, REPORT_COUNT);
-      reportToSend[2] = 1;
-      reportToSend[3] = 3;
+      reportToSend[3] = '4';
+      reportToSend[4] = '5';
     }
   }
 
@@ -381,11 +373,11 @@ int setupCmd(const USB_Setup_TypeDef *setup)
                ) {
           */
           if( ((setup->wValue & 0xFF) == REPORT_ID ) ) { 
-            USBD_Write( EP_IN, &reportToSend, REPORT_COUNT, NULL);
+            USBD_Write(0, &reportToSend, REPORT_COUNT, NULL);
             retVal = USB_STATUS_OK;
           }
           break;
-/*
+          /*
       case USB_HID_SET_IDLE:
         // ********************
           if ( ( (setup->wValue & 0xFF)    == 0)              // Report ID     
@@ -413,7 +405,7 @@ int setupCmd(const USB_Setup_TypeDef *setup)
           retVal = USB_STATUS_OK;
         }
         break;
-*/
+          */
         } // swtich bRequest
         
       } // if
