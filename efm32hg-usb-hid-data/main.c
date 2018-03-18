@@ -11,11 +11,13 @@
 #include "em_usb.h"
 #include "em_wdog.h"
 #include "em_system.h"
-
 #include <em_leuart.h>
 
 #include <stdio.h>
 
+
+#include "callbacks.h"
+#include "descriptors.h"
 
 // LEUART Rx/Tx Port/Pin Location 
 #define LEUART_LOCATION    0
@@ -24,74 +26,11 @@
 #define LEUART_RXPORT      gpioPortD        // LEUART reception port    
 #define LEUART_RXPIN       5                // LEUART reception pin     
 
-
-#include "callbacks.h"
-#include "descriptors.h"
-
+#include "leuart.h"
 
 //char sbuf[150] = "hi!";
 char dbgstr[30];
 
-int write_char(int c)
-{
-    while (!(LEUART0->STATUS & LEUART_STATUS_TXBL))
-        ;
-    LEUART0->TXDATA = (uint32_t)c & 0xffUL;
-    return 0;
-}
-int write_str(const char *s)
-{
-    while (*s)
-        write_char(*s++);
-    write_char('\r');
-    write_char('\n');
-    return 0;
-}
-
-/***************************************************************************//**
- * @brief  Setting up LEUART
- ******************************************************************************/
-void setupLeuart(void)
-{
-  /* Enable peripheral clocks */
-  CMU_ClockEnable(cmuClock_HFPER, true);
-  /* Configure GPIO pins */
-  CMU_ClockEnable(cmuClock_GPIO, true);
-  /* To avoid false start, configure output as high */
-  GPIO_PinModeSet(LEUART_TXPORT, LEUART_TXPIN, gpioModePushPull, 1);
-  GPIO_PinModeSet(LEUART_RXPORT, LEUART_RXPIN, gpioModeInput, 0);
-
-  LEUART_Init_TypeDef init = LEUART_INIT_DEFAULT;
-
-  /* Enable CORE LE clock in order to access LE modules */
-  CMU_ClockEnable(cmuClock_CORELE, true);
-
-  /* Select LFXO for LEUARTs (and wait for it to stabilize) */
-  CMU_ClockSelectSet(cmuClock_LFB, cmuSelect_LFXO);
-  CMU_ClockEnable(cmuClock_LEUART0, true);
-
-  /* Do not prescale clock */
-  CMU_ClockDivSet(cmuClock_LEUART0, cmuClkDiv_1);
-
-  /* Configure LEUART */
-  init.enable = leuartDisable;
-  //init.baudrate = BAUDRATE;
-      
-  LEUART_Init(LEUART0, &init);
-
-  /* Enable pins at default location */
-  LEUART0->ROUTE = LEUART_ROUTE_RXPEN | LEUART_ROUTE_TXPEN | LEUART_LOCATION;
-
-  /* Set RXDMAWU to wake up the DMA controller in EM2 */
-//LEUART_RxDmaInEM2Enable(LEUART0, true);
-
-  /* Clear previous RX interrupts */
-  LEUART_IntClear(LEUART0, LEUART_IF_RXDATAV);
-  NVIC_ClearPendingIRQ(LEUART0_IRQn);
-
-  /* Finally enable it */
-  LEUART_Enable(LEUART0, leuartEnable);
-}
 
 
 int setupCmd(const USB_Setup_TypeDef *setup);
@@ -177,7 +116,7 @@ int main()
     while (1);
   }
   
-  uint32_t uniq = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
+  uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
   
   setupLeuart();
   
@@ -190,7 +129,21 @@ int main()
   // TIMER1, so those are off-limits to us.
   //CAPSENSE_Init();
 
+  char serbuf[17];
+  sprintf(serbuf, "%8llx", uniqid);
+  write_str("uniqid:");write_str(serbuf);
 
+  sprintf(serbuf, "3%8lx", (uint32_t)uniqid );
+  write_str("serbuf:");write_str(serbuf);
+  iSerialNumber[2]  = serbuf[0]; // mk3
+  iSerialNumber[4]  = serbuf[1];
+  iSerialNumber[6]  = serbuf[2];
+  iSerialNumber[8]  = serbuf[3];
+  iSerialNumber[10] = serbuf[4];
+  iSerialNumber[12] = serbuf[5];
+  iSerialNumber[14] = serbuf[6];
+  iSerialNumber[16] = serbuf[7];
+  
   hidDescriptor = (void*) USBDESC_HidDescriptor; // FIXME
   
   // Enable the USB controller. Remember, this consumes TIMER2 as per

@@ -174,10 +174,10 @@ STATIC_CONST_STRING_DESC( iProduct     , 'b','l','i','n','k','(','1',')',' ','m'
 //STATIC_CONST_STRING_DESC( iSerialNumber, '2','2','0','0','1','2','3','4' );
 
 SL_ALIGN(4)
-static const uint8_t iSerialNumber[] =  { 18,USB_STRING_DESCRIPTOR,
-                                          '1',0,'2',0,'3',0,'4',0,'5',0,'6',0,'7',0,'8',0,
-                                          0,0};
-////                                        len,type,bytes...,null
+static uint8_t iSerialNumber[] =  { 18,USB_STRING_DESCRIPTOR,
+                                    '1',0,'2',0,'3',0,'4',0,'5',0,'6',0,'7',0,'8',0,
+                                    0,0};
+////                                len,type,bytes...,null
 
 static const void * const strings[] =
 {
