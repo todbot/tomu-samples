@@ -41,10 +41,12 @@ extern "C" {
 #define DEVICE_VER		0x0101	/* Program version */
 
 #define REPORT_ID  1
+#define REPORT2_ID  2
 #define REPORT_COUNT 8
+#define REPORT2_COUNT 64
 
 SL_ALIGN(4)
-const char MyHIDReportDescriptor[24] SL_ATTRIBUTE_ALIGN(4) =
+const char MyHIDReportDescriptor[48] SL_ATTRIBUTE_ALIGN(4) =
 {
     0x06, 0x00, 0xff,              // USAGE_PAGE (Generic Desktop)
     0x09, 0x01,                    // USAGE (Vendor Usage 1)
@@ -53,7 +55,16 @@ const char MyHIDReportDescriptor[24] SL_ATTRIBUTE_ALIGN(4) =
     0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
     0x75, 0x08,                    //   REPORT_SIZE (8)
     0x85, REPORT_ID,               //   REPORT_ID (1)
-    0x95, REPORT_COUNT,           //   REPORT_COUNT (8)
+    0x95, REPORT_COUNT,            //   REPORT_COUNT (8)
+    0x09, 0x00,                    //   USAGE (Undefined)
+    0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
+    0xc0,                          // END_COLLECTION
+    0xa1, 0x01,                    // COLLECTION (Application)
+    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+    0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
+    0x75, 0x08,                    //   REPORT_SIZE (8)
+    0x85, REPORT2_ID,              //   REPORT_ID (2)
+    0x95, REPORT2_COUNT,            //   REPORT_COUNT (64)
     0x09, 0x00,                    //   USAGE (Undefined)
     0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
     0xc0                           // END_COLLECTION

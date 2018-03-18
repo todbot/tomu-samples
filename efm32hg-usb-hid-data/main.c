@@ -139,7 +139,6 @@ void SpinDelay(uint32_t millis) {
 }
 
 
-
 // HID keyboard input report definition. 
 SL_PACK_START(1)
 typedef struct {
@@ -148,7 +147,7 @@ typedef struct {
 SL_PACK_END()
 
 static void  *hidDescriptor = NULL;
-static uint8_t   inbuff[16]; // FIXME: REPORT_COUNT
+static uint8_t   inbuff[REPORT2_COUNT]; // FIXME: REPORT_COUNT
 
 // The last keyboard report reported to the driver. 
 SL_ALIGN(4)
@@ -180,20 +179,13 @@ int main()
   setupLeuart();
   write_str("startup...\n");
   
-  // Set up two pins with the GPIO controller and configure them to be open
-  // drain:
-  //  - PA0 == green
-  //  - PB7 == red
-  // GPIO_PinModeSet(gpioPortA, 0, gpioModeWiredAnd, 0);
-  //GPIO_PinModeSet(gpioPortB, 7, gpioModeWiredAnd, 0);
-  /*
-  */
   GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
   GPIO_PinModeSet(gpioPortF, 5, gpioModePushPull, 0);
   
   // Enable the capacitive touch sensor. Remember, this consumes TIMER0 and
   // TIMER1, so those are off-limits to us.
   //CAPSENSE_Init();
+
 
   hidDescriptor = (void*) USBDESC_HidDescriptor; // FIXME
   
@@ -214,7 +206,8 @@ int main()
   // Blink infinitely, in an aviation-like pattern.
   while (1) {
 
-    write_str(sbuf);
+    //write_str(sbuf);
+    write_char('.');
 
     SpinDelay(500);
    
@@ -259,10 +252,10 @@ int main()
  * @param[in] status    Transfer status code.
  * @param[in] xferred   Number of bytes transferred.
  * @param[in] remaining Number of bytes not transferred.
-v *
+ *
  * @return USB_STATUS_OK.
  *****************************************************************************/
-static int OutputReportReceived(USB_Status_TypeDef status,
+static int ReportReceived(USB_Status_TypeDef status,
                                 uint32_t xferred,
                                 uint32_t remaining)
 {
@@ -285,6 +278,22 @@ static int OutputReportReceived(USB_Status_TypeDef status,
       reportToSend[4] = '5';
     }
   }
+
+  return USB_STATUS_OK;
+}
+
+static int Report2Received(USB_Status_TypeDef status,
+                           uint32_t xferred,
+                           uint32_t remaining)
+{
+  (void) remaining;
+  (void) xferred;
+  (void) status;
+  
+  GPIO_PinOutSet(gpioPortF, 4);
+  sprintf(dbgstr, "2! %x,%x,%x,%x,%x,%x,%x,%x\n", 
+          inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
+  write_str(dbgstr);
 
   return USB_STATUS_OK;
 }
@@ -348,7 +357,6 @@ int setupCmd(const USB_Setup_TypeDef *setup)
         switch ( setup->bRequest ) {
         case USB_HID_SET_REPORT:           // 0x09, receive data from host
           
-          GPIO_PinOutSet(gpioPortF, 4);
           /*
           if ( ( (setup->wValue >> 8)      == 3)              // FEATURE report 
           if ( ( (setup->wValue >> 8)      == 2)              // OUTPUT report 
@@ -357,10 +365,15 @@ int setupCmd(const USB_Setup_TypeDef *setup)
                && (setup->Direction        != USB_SETUP_DIR_OUT)    ) { // 
           */
           
-          if( ((setup->wValue & 0xFF) == REPORT_ID ) ) {      // Report ID
-            USBD_Read(0, (void*)&inbuff, REPORT_COUNT, OutputReportReceived);
+          if( (setup->wValue & 0xFF) == REPORT_ID ) { 
+            USBD_Read(0, (void*)&inbuff, REPORT_COUNT, ReportReceived);
             retVal = USB_STATUS_OK;
           }
+          else if( (setup->wValue & 0xFF) == REPORT2_ID ) {
+            USBD_Read(0, (void*)&inbuff, REPORT2_COUNT, Report2Received);
+            retVal = USB_STATUS_OK;            
+          }
+
           break;
 
         case USB_HID_GET_REPORT:           // 0x01, send data to host
