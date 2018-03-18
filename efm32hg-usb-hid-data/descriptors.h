@@ -167,15 +167,17 @@ const void *USBDESC_HidDescriptor = (void*)  &configDesc[USB_CONFIG_DESCSIZE + U
  * Here 0x04 = United States, 0x09 = English. 
  * Refer to the USB Language Identifiers documentation. */
 STATIC_CONST_STRING_DESC_LANGID( langID, 0x04, 0x09 );
-STATIC_CONST_STRING_DESC( iManufacturer, 'S','i','l','i','c','o','n',' ',
-                                         'L', 'a', 'b', 's' );
-STATIC_CONST_STRING_DESC( iProduct     , 'E','F','M','3','2',' ',
-                                         'T','T','a','m','p','l','e',' ',
-                                         'U','S','B',' ', 
-                                         'D','e','v','i','c','e');
-STATIC_CONST_STRING_DESC( iSerialNumber, '0','0','0','0','0','0',             
-                                         '0','0','1','2','3','4' );
+STATIC_CONST_STRING_DESC( iManufacturer, 'T','h','i','n','g','M');
+                          
+STATIC_CONST_STRING_DESC( iProduct     , 'b','l','i','n','k','(','1',')',' ','m','k','3',
+                                         ' ','0','0','1');
+//STATIC_CONST_STRING_DESC( iSerialNumber, '2','2','0','0','1','2','3','4' );
 
+SL_ALIGN(4)
+static const uint8_t iSerialNumber[] =  { 18,USB_STRING_DESCRIPTOR,
+                                          '1',0,'2',0,'3',0,'4',0,'5',0,'6',0,'7',0,'8',0,
+                                          0,0};
+////                                        len,type,bytes...,null
 
 static const void * const strings[] =
 {

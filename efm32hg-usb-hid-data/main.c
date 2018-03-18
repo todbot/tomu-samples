@@ -10,6 +10,7 @@
 #include "em_gpio.h"
 #include "em_usb.h"
 #include "em_wdog.h"
+#include "em_system.h"
 
 #include <em_leuart.h>
 
@@ -28,7 +29,7 @@
 #include "descriptors.h"
 
 
-char sbuf[150] = "hi!";
+//char sbuf[150] = "hi!";
 char dbgstr[30];
 
 int write_char(int c)
@@ -98,11 +99,11 @@ int setupCmd(const USB_Setup_TypeDef *setup);
 /* Define callbacks that are called by the USB stack on different events. */
 static const USBD_Callbacks_TypeDef callbacks =
 {
-  .usbReset        = NULL,              /* Called whenever USB reset signalling is detected on the USB port. */
-  .usbStateChange  = stateChange,       /* Called whenever the device change state.  */
-  .setupCmd        = setupCmd,          /* Called on each setup request received from host. */
-  .isSelfPowered   = NULL,              /* Called whenever the device stack needs to query if the device is currently self- or bus-powered. */
-  .sofInt          = NULL               /* Called at each SOF (Start of Frame) interrupt. If NULL, the device stack will not enable the SOF interrupt. */
+  .usbReset        = NULL,          // Called whenever USB reset signalling is detected  
+  .usbStateChange  = stateChange,   // Called whenever the device change state.  
+  .setupCmd        = setupCmd,      // Called on each setup request received from host. 
+  .isSelfPowered   = NULL,          // Called when the device stack needs to query if the device is currently self- or bus-powered. 
+  .sofInt          = NULL           // Called at each SOF interrupt. If NULL, device stack will not enable the SOF interrupt. 
 };
 
 /* Fill the init struct. This struct is passed to USBD_Init() in order 
@@ -147,7 +148,7 @@ typedef struct {
 SL_PACK_END()
 
 static void  *hidDescriptor = NULL;
-static uint8_t   inbuff[REPORT2_COUNT]; // FIXME: REPORT_COUNT
+static uint8_t   inbuf[REPORT2_COUNT]; // FIXME: REPORT_COUNT
 
 // The last keyboard report reported to the driver. 
 SL_ALIGN(4)
@@ -176,7 +177,10 @@ int main()
     while (1);
   }
   
+  uint32_t uniq = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
+  
   setupLeuart();
+  
   write_str("startup...\n");
   
   GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
@@ -243,6 +247,60 @@ int main()
   }
 }
 
+/**
+ * handleMessage(char* inbuf) -- main command router
+ *
+ * inbuf[] is 8 bytes long
+ *  byte0 = report-id
+ *  byte1 = command
+ *  byte2..byte7 = args for command
+ *
+ * Available commands:
+ *    - Fade to RGB color       format: { 1, 'c', r,g,b,     th,tl, n }
+ *    - Set RGB color now       format: { 1, 'n', r,g,b,       0,0, n } (*)
+ *    - Read current RGB color  format: { 1, 'r', n,0,0,       0,0, n } (2)
+ *    - Serverdown tickle/off   format: { 1, 'D', on,th,tl,  st,sp,ep } (*)
+ *    - PlayLoop                format: { 1, 'p', on,sp,ep,c,    0, 0 } (2)
+ *    - Playstate readback      format: { 1, 'S', 0,0,0,       0,0, 0 } (2)
+ *    - Set color pattern line  format: { 1, 'P', r,g,b,     th,tl, p }
+ *    - Save color patterns     format: { 1, 'W', 0,0,0,       0,0, 0 } (2)
+ *    - read color pattern line format: { 1, 'R', 0,0,0,       0,0, p }
+ *    - Set ledn                format: { 1, 'l', n,0,0,       0,0, 0 } (2+)
+ *    - Read EEPROM location    format: { 1, 'e', ad,0,0,      0,0, 0 } (1)
+ *    - Write EEPROM location   format: { 1, 'E', ad,v,0,      0,0, 0 } (1)
+ *    - Get version             format: { 1, 'v', 0,0,0,       0,0, 0 }
+ *    - Test command            format: { 1, '!', 0,0,0,       0,0, 0 }
+ *
+ *  Fade to RGB color        format: { 1, 'c', r,g,b,      th,tl, ledn }
+ *  Set RGB color now        format: { 1, 'n', r,g,b,        0,0, ledn }
+ *  Play/Pause, with pos     format: { 1, 'p', {1/0},pos,0,  0,0,    0 }
+ *  Play/Pause, with pos     format: { 1, 'p', {1/0},pos,endpos, 0,0,0 }
+ *  Write color pattern line format: { 1, 'P', r,g,b,      th,tl,  pos }
+ *  Read color pattern line  format: { 1, 'R', 0,0,0,        0,0, pos }
+ *  Server mode tickle       format: { 1, 'D', {1/0},th,tl, {1,0},0, 0 }
+ *  Get version              format: { 1, 'v', 0,0,0,        0,0, 0 }
+ *
+ **/
+static void handleMessage(uint8_t reportId)
+{
+  sprintf(dbgstr, "%d:%x,%x,%x,%x,%x,%x,%x,%x\n", reportId,
+          inbuf[0],inbuf[1],inbuf[2],inbuf[3],inbuf[4],inbuf[5],inbuf[6],inbuf[7] );
+  write_str(dbgstr);
+
+  // pre-load response with request, contains report id
+  uint8_t count = (reportId==REPORT_ID) ? REPORT_COUNT : REPORT2_COUNT;
+  memcpy( (void*)reportToSend, (void*)inbuf, count);
+  
+  uint8_t cmd = inbuf[1];
+  
+  // 1, 76, 0, 0, ...
+  if( cmd == 'v' ) {
+    GPIO_PinOutSet(gpioPortF, 5);
+    reportToSend[3] = '2';
+    reportToSend[4] = '1';
+  }
+  
+}
 
 /**************************************************************************//**
  * @brief
@@ -255,45 +313,33 @@ int main()
  *
  * @return USB_STATUS_OK.
  *****************************************************************************/
-static int ReportReceived(USB_Status_TypeDef status,
-                                uint32_t xferred,
-                                uint32_t remaining)
+static int ReportReceived(USB_Status_TypeDef status, uint32_t xferred, uint32_t remaining)
 {
   (void) remaining;
 
-  if ((status           == USB_STATUS_OK)
-      && (xferred       == REPORT_COUNT) ) {
+  if ((status   == USB_STATUS_OK) &&
+      (xferred  == REPORT_COUNT) ) {
       //      && (setReportFunc != NULL) ) {
       //setReportFunc( (uint8_t)tmpBuffer);
-    sprintf(dbgstr, "%x,%x,%x,%x,%x,%x,%x,%x\n", 
-            inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
-    write_str(dbgstr);
-    uint8_t cmd = inbuff[1];
-
-    // 1, 76, 0, 0, ...
-    if( cmd == 'v' ) {
-      GPIO_PinOutSet(gpioPortF, 5);
-      memcpy( (void*)reportToSend, (void*)inbuff, REPORT_COUNT);
-      reportToSend[3] = '4';
-      reportToSend[4] = '5';
-    }
+    handleMessage(REPORT_ID);
   }
 
   return USB_STATUS_OK;
 }
 
-static int Report2Received(USB_Status_TypeDef status,
-                           uint32_t xferred,
-                           uint32_t remaining)
+/*****************************************************************************
+ *
+ *****************************************************************************/
+static int Report2Received(USB_Status_TypeDef status, uint32_t xferred, uint32_t remaining)
 {
   (void) remaining;
-  (void) xferred;
-  (void) status;
+  //(void) xferred;  (void) status;
   
-  GPIO_PinOutSet(gpioPortF, 4);
-  sprintf(dbgstr, "2! %x,%x,%x,%x,%x,%x,%x,%x\n", 
-          inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
-  write_str(dbgstr);
+  if ((status   == USB_STATUS_OK) &&
+      (xferred  == REPORT2_COUNT) ) {
+    GPIO_PinOutSet(gpioPortF, 4);
+    handleMessage(REPORT2_ID);
+  }
 
   return USB_STATUS_OK;
 }
@@ -347,11 +393,6 @@ int setupCmd(const USB_Setup_TypeDef *setup)
       if ( (setup->Type         == USB_SETUP_TYPE_CLASS)
            && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE) ) { 
         // && (setup->wIndex    == HIDKBD_INTERFACE_NO)    ) {
-
-        // sprintf(sbuf, "%s\n%x/%x/%x/%x/%x",
-        // sbuf,setup->Type, setup->Direction, setup->Recipient, setup->bRequest, setup->wValue);
-        // sprintf(sbuf, "%s\n%x/%x/%x/%x",
-        //        sbuf,setup->wValue>>8, setup->wValue &0xff, setup->wLength, setup->Direction);
   
         // Implement the necessary HID class specific commands.           
         switch ( setup->bRequest ) {
@@ -366,11 +407,11 @@ int setupCmd(const USB_Setup_TypeDef *setup)
           */
           
           if( (setup->wValue & 0xFF) == REPORT_ID ) { 
-            USBD_Read(0, (void*)&inbuff, REPORT_COUNT, ReportReceived);
+            USBD_Read(0, (void*)&inbuf, REPORT_COUNT, ReportReceived);
             retVal = USB_STATUS_OK;
           }
           else if( (setup->wValue & 0xFF) == REPORT2_ID ) {
-            USBD_Read(0, (void*)&inbuff, REPORT2_COUNT, Report2Received);
+            USBD_Read(0, (void*)&inbuf, REPORT2_COUNT, Report2Received);
             retVal = USB_STATUS_OK;            
           }
 
@@ -390,6 +431,7 @@ int setupCmd(const USB_Setup_TypeDef *setup)
             retVal = USB_STATUS_OK;
           }
           break;
+          
           /*
       case USB_HID_SET_IDLE:
         // ********************
@@ -422,6 +464,7 @@ int setupCmd(const USB_Setup_TypeDef *setup)
         } // swtich bRequest
         
       } // if
+
   } // else
 
 
