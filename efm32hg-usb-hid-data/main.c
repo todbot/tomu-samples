@@ -150,13 +150,10 @@ SL_PACK_END()
 static void  *hidDescriptor = NULL;
 static uint8_t   inbuff[16]; // FIXME: REPORT_COUNT
 
-// The last keyboard report sent to host. 
-//SL_ALIGN(4)
-//static HIDReport_t lastSentReport SL_ATTRIBUTE_ALIGN(4);
-
 // The last keyboard report reported to the driver. 
 SL_ALIGN(4)
-static HIDReport_t lastKnownReport SL_ATTRIBUTE_ALIGN(4);
+static uint8_t reportToSend[REPORT_COUNT] SL_ATTRIBUTE_ALIGN(4);
+//static HIDReport_t reportToSend SL_ATTRIBUTE_ALIGN(4);
 
 
 int main()
@@ -227,20 +224,7 @@ int main()
       //SpinDelay(100);
     write_str(sbuf);
 
-    
-    // Repeat for the red LED on port PB7, but do so twice so that those that
-    // self-assemble their boards can be sure they've got the green and red LEDs
-    // around the right way.
-    /*
-    GPIO_PinOutSet(gpioPortF, 4);
-    SpinDelay(100);
-    GPIO_PinOutClear(gpioPortF, 4);
-    SpinDelay(100);
-    GPIO_PinOutSet(gpioPortF, 4);
-    SpinDelay(100);
-    GPIO_PinOutClear(gpioPortF, 4);
-    */
-    SpinDelay(500);
+   SpinDelay(500);
 
     /*
     // Capture/sample the state of the capacitive touch sensors.
@@ -291,17 +275,23 @@ static int OutputReportReceived(USB_Status_TypeDef status,
                                 uint32_t remaining)
 {
   (void) remaining;
-  //(void) status;
-  //(void) xferred;
 
   if ((status           == USB_STATUS_OK)
-      && (xferred       == 8) ) {
+      && (xferred       == REPORT_COUNT) ) {
       //      && (setReportFunc != NULL) ) {
       //setReportFunc( (uint8_t)tmpBuffer);
     sprintf(dbgstr, "%x,%x,%x,%x,%x,%x,%x,%x\n", 
             inbuff[0],inbuff[1],inbuff[2],inbuff[3],inbuff[4],inbuff[5],inbuff[6],inbuff[7] );
     write_str(dbgstr);
     GPIO_PinOutSet(gpioPortF, 5);
+    uint8_t cmd = inbuff[1];
+
+    // 1, 76, 0, 0, ...
+    if( cmd == 'v' ) {
+      memcpy( (void*)reportToSend, (void*)inbuff, REPORT_COUNT);
+      reportToSend[2] = 1;
+      reportToSend[3] = 3;
+    }
   }
 
   return USB_STATUS_OK;
@@ -330,17 +320,18 @@ int setupCmd(const USB_Setup_TypeDef *setup)
         && (setup->Direction == USB_SETUP_DIR_IN)
         && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE)    ) {
       
-      /* A HID device must extend the standard GET_DESCRIPTOR command   */
-      /* with support for HID descriptors.                              */
+    /* A HID device must extend the standard GET_DESCRIPTOR command   */
+    /* with support for HID descriptors.                              */
     switch (setup->bRequest) {
     case GET_DESCRIPTOR:
-      /********************/
+
       if ( (setup->wValue >> 8) == USB_HID_REPORT_DESCRIPTOR ) {
         USBD_Write(0, (void*)MyHIDReportDescriptor,
                    SL_MIN(sizeof(MyHIDReportDescriptor), setup->wLength),
                    NULL);
         retVal = USB_STATUS_OK;
-      } else if ( (setup->wValue >> 8) == USB_HID_DESCRIPTOR ) {
+      }
+      else if ( (setup->wValue >> 8) == USB_HID_DESCRIPTOR ) {
         /* The HID descriptor might be misaligned ! */
         memcpy(hidDesc, hidDescriptor, USB_HID_DESCSIZE);
         USBD_Write(0, hidDesc, SL_MIN(USB_HID_DESCSIZE, setup->wLength),
@@ -354,11 +345,11 @@ int setupCmd(const USB_Setup_TypeDef *setup)
 
       if ( (setup->Type         == USB_SETUP_TYPE_CLASS)
            && (setup->Recipient == USB_SETUP_RECIPIENT_INTERFACE) ) { 
-        //           && (setup->wIndex    == HIDKBD_INTERFACE_NO)    ) {
+        // && (setup->wIndex    == HIDKBD_INTERFACE_NO)    ) {
 
         // sprintf(sbuf, "%s\n%x/%x/%x/%x/%x",
         // sbuf,setup->Type, setup->Direction, setup->Recipient, setup->bRequest, setup->wValue);
-        //sprintf(sbuf, "%s\n%x/%x/%x/%x",
+        // sprintf(sbuf, "%s\n%x/%x/%x/%x",
         //        sbuf,setup->wValue>>8, setup->wValue &0xff, setup->wLength, setup->Direction);
   
         // Implement the necessary HID class specific commands.           
@@ -366,37 +357,34 @@ int setupCmd(const USB_Setup_TypeDef *setup)
         case USB_HID_SET_REPORT:           // 0x09, receive data from host
           
           GPIO_PinOutSet(gpioPortF, 4);
-  
-          // *******************
-
-          if ( ( (setup->wValue & 0xFF) == 1)              // Report ID
-               ) {
-    /*
+          /*
           if ( ( (setup->wValue >> 8)      == 3)              // FEATURE report 
+          if ( ( (setup->wValue >> 8)      == 2)              // OUTPUT report 
                && ( (setup->wValue & 0xFF) == 1)              // Report ID  
                && (setup->wLength          == 1)              // Report length 
                && (setup->Direction        != USB_SETUP_DIR_OUT)    ) { // 
-    */
-
-            USBD_Read(0, (void*)&inbuff, 8, OutputReportReceived);
+          */
+          
+          if( ((setup->wValue & 0xFF) == REPORT_ID ) ) {      // Report ID
+            USBD_Read(0, (void*)&inbuff, REPORT_COUNT, OutputReportReceived);
             retVal = USB_STATUS_OK;
           }
           break;
+
         case USB_HID_GET_REPORT:           // 0x01, send data to host
 
-
-          // ********************
-          if ( ( (setup->wValue >> 8)       == 3)             // FEATURE report  
+          /*
+          if ( ( (setup->wValue >> 8)       == 1)             // INPUT report  
                && ( (setup->wValue & 0xFF)  == 1)             // Report ID     
                //               && (setup->wLength           == 8)             // Report length 
                //               && (setup->Direction         == USB_SETUP_DIR_IN)    ) {
                ) {
-            
-            USBD_Write( EP_IN, &lastKnownReport, sizeof(HIDReport_t), NULL);
+          */
+          if( ((setup->wValue & 0xFF) == REPORT_ID ) ) { 
+            USBD_Write( EP_IN, &reportToSend, REPORT_COUNT, NULL);
             retVal = USB_STATUS_OK;
           }
           break;
-          
 /*
       case USB_HID_SET_IDLE:
         // ********************
