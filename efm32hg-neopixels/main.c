@@ -220,6 +220,34 @@ typedef struct {
 // this idea from JeeLabs:
 // https://jeelabs.org/book/1450d/
 
+/*
+// @ 4MHz, 5-bits for each ws2812 bit
+// ws2812 0 bit = 0b10000
+// ws2812 1 bit = 0b11110
+// 15 bits carry 3 ws2812 bits
+// => 45 bits carry 6 ws bits
+// => 90 bits carry 12 ws bits
+// 10 bits carry 2 ws2812 bits
+// => 20 bits c
+// concept from: https://www.pjrc.com/non-blocking-ws2812-led-library/
+// (but SPI instead of UART because we can't invert the output?)
+// NAH FORGET THIS: look up 'TXINV' in USARTn_CTRL
+static const uint16_t bits4M[] = {
+  0b100001000010000, // => 0b000
+  0b100001000011110, // => 0b001
+  0b100001111010000, // => 0b010
+  0b100001111011110, // => 0b011
+  0b111101000010000, // => 0b100
+  0b111101000011110, // => 0b101
+  0b111101111010000, // => 0b110
+  0b111101111011110, // => 0b111
+};
+*/
+// @ 2.4MHz, 3 bits for each ws2812 bit
+// ws2812 0 bit = 0b10000
+// ws2812 1 bit = 0b11110
+// 12 bits carry 4 ws2812 bits
+// concept from: https://jeelabs.org/book/1450d/
 static const uint16_t bits[] = {
     0b100100100100,
     0b100100100110,
