@@ -15,9 +15,25 @@
 
 #include <stdio.h>
 
-
 #include "callbacks.h"
 #include "descriptors.h"
+
+#define blink1_version_major '3'
+#define blink1_version_minor '1'
+
+// RGB triplet of 8-bit vals for input/output use
+typedef struct {
+    uint8_t g;
+    uint8_t r;
+    uint8_t b;
+} rgb_t;
+
+#define nLEDs 18
+rgb_t leds[nLEDs];  // NOTE: rgb_t is G,R,B formatted
+void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n);
+
+#include "color_funcs.h"
+
 
 // LEUART Rx/Tx Port/Pin Location 
 #define LEUART_LOCATION    0
@@ -28,21 +44,23 @@
 
 #include "leuart.h"
 
-//char sbuf[150] = "hi!";
 char dbgstr[30];
 
 
+// next time
+const uint32_t led_update_millis = 10;  // tick msec
+uint32_t led_update_next;
 
 int setupCmd(const USB_Setup_TypeDef *setup);
 
 /* Define callbacks that are called by the USB stack on different events. */
 static const USBD_Callbacks_TypeDef callbacks =
 {
-  .usbReset        = NULL,          // Called whenever USB reset signalling is detected  
-  .usbStateChange  = stateChange,   // Called whenever the device change state.  
-  .setupCmd        = setupCmd,      // Called on each setup request received from host. 
-  .isSelfPowered   = NULL,          // Called when the device stack needs to query if the device is currently self- or bus-powered. 
-  .sofInt          = NULL           // Called at each SOF interrupt. If NULL, device stack will not enable the SOF interrupt. 
+  .usbReset       = NULL,         // Called whenever USB reset signalling is detected  
+  .usbStateChange = stateChange,  // Called whenever the device change state.  
+  .setupCmd       = setupCmd,     // Called on each setup request received from host. 
+  .isSelfPowered  = NULL,         // Called when the device stack needs to query if the device is currently self- or bus-powered. 
+  .sofInt         = NULL          // Called at each SOF interrupt. If NULL, device stack will not enable the SOF interrupt. 
 };
 
 /* Fill the init struct. This struct is passed to USBD_Init() in order 
@@ -59,8 +77,7 @@ static const USBD_Init_TypeDef initstruct =
 };
 
 
-// The uptime of this application in milliseconds, maintained by the SysTick
-// timer.
+// The uptime in milliseconds, maintained by the SysTick timer.
 volatile uint32_t uptime_millis;
 
 // This functions is injected into the Interrupt Vector Table, and will be
@@ -69,7 +86,7 @@ volatile uint32_t uptime_millis;
 void SysTick_Handler() {
   uptime_millis++;
 }
-
+// simple delay() 
 void SpinDelay(uint32_t millis) {
   // Calculate the time at which we need to finish "sleeping".
   uint32_t sleep_until = uptime_millis + millis;
@@ -79,62 +96,34 @@ void SpinDelay(uint32_t millis) {
 }
 
 
-// HID keyboard input report definition. 
-SL_PACK_START(1)
-typedef struct {
-  uint8_t args[8];
-} SL_ATTRIBUTE_PACKED HIDReport_t;
-SL_PACK_END()
-
 static void  *hidDescriptor = NULL;
-static uint8_t   inbuf[REPORT2_COUNT]; // FIXME: REPORT_COUNT
 
-// The last keyboard report reported to the driver. 
+// the report received from the host
+// could be REPORT_COUNT or REPORT2_COUNT long
+// first byte is reportId
+static uint8_t  inbuf[REPORT2_COUNT];
+
+// The report to send to the host (only on reportId 1)
+// generally it's a copy of the last report received
 SL_ALIGN(4)
 static uint8_t reportToSend[REPORT_COUNT] SL_ATTRIBUTE_ALIGN(4);
-//static HIDReport_t reportToSend SL_ATTRIBUTE_ALIGN(4);
 
 
-int main()
+
+/**
+ * Modify 'iSerialNumber' string to be based on chip's unique Id
+ */
+static void makeSerialNumber()
 {
-  // Runs the Silicon Labs chip initialisation stuff, that also deals with
-  // errata (implements workarounds, etc).
-  CHIP_Init();
-  
-  // Disable the watchdog that the bootloader started.
-  WDOG->CTRL = 0;
-  
-  // Switch on the clock for GPIO. Even though there's no immediately obvious
-  // timing stuff going on beyond the SysTick below, it still needs to be
-  // enabled for the GPIO to work.
-  CMU_ClockEnable(cmuClock_GPIO, true);
-  
-  // Sets up and enable the `SysTick_Handler' interrupt to fire once every 1ms.
-  // ref: http://community.silabs.com/t5/Official-Blog-of-Silicon-Labs/Chapter-5-MCU-Clocking-Part-2-The-SysTick-Interrupt/ba-p/145297
-  if (SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 1000)) {
-    // Something went wrong.
-    while (1);
-  }
-  
   uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
   
-  setupLeuart();
-  
-  write_str("startup...\n");
-  
-  GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
-  GPIO_PinModeSet(gpioPortF, 5, gpioModePushPull, 0);
-  
-  // Enable the capacitive touch sensor. Remember, this consumes TIMER0 and
-  // TIMER1, so those are off-limits to us.
-  //CAPSENSE_Init();
-
   char serbuf[17];
-  sprintf(serbuf, "%8llx", uniqid);
-  write_str("uniqid:");write_str(serbuf);
+  sprintf(serbuf, "3%8.8lx", (uint32_t)uniqid ); // '3' means mk3, cast 64-bit to 32-bit to use lower 32bit
+  //sprintf(serbuf, "%16.16llx", uniqid);
+  //write_str("uniqid:");write_str(serbuf);
+  //write_str("serbuf:");write_str(serbuf);
 
-  sprintf(serbuf, "3%8lx", (uint32_t)uniqid );
-  write_str("serbuf:");write_str(serbuf);
+  // FIXME:
   iSerialNumber[2]  = serbuf[0]; // mk3
   iSerialNumber[4]  = serbuf[1];
   iSerialNumber[6]  = serbuf[2];
@@ -143,32 +132,17 @@ int main()
   iSerialNumber[12] = serbuf[5];
   iSerialNumber[14] = serbuf[6];
   iSerialNumber[16] = serbuf[7];
-  
-  hidDescriptor = (void*) USBDESC_HidDescriptor; // FIXME
-  
-  // Enable the USB controller. Remember, this consumes TIMER2 as per
-  // -DUSB_TIMER=USB_TIMER2 in Makefile because TIMER0 and TIMER1 are already
-  // taken by the capacitive touch sensors.
-  USBD_Init(&initstruct);
+}
 
-  /*
-   * When using a debugger it is practical to uncomment the following three
-   * lines to force host to re-enumerate the device.
-   */
-   USBD_Disconnect();      
-   USBTIMER_DelayMs(1000); 
-   USBD_Connect();         
-
-
-  // Blink infinitely, in an aviation-like pattern.
-  while (1) {
-
-    //write_str(sbuf);
+uint32_t lastmiscmillis;
+void updateMisc()
+{
+  if( (uptime_millis - lastmiscmillis) > 500 ) {
+    lastmiscmillis = uptime_millis;
     write_char('.');
-
-    SpinDelay(500);
-   
-    /*
+    //SpinDelay(500);
+  }
+  /*
     // Capture/sample the state of the capacitive touch sensors.
     CAPSENSE_Sense();
 
@@ -196,10 +170,110 @@ int main()
       }
     }
     SpinDelay(500);
-    */
-  }
+  */
 }
 
+// -------- LED & color pattern handling -------------------------------------
+//
+// actually set the color of a particular LED, or all of them
+void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n)
+{
+    if (n == 255) { // all of them
+        for (int i = 0; i < nLEDs; i++) {
+            leds[i].r = r;  leds[i].g = g; leds[i].b = b;
+        }
+    }
+    else {    // else just one LED, not all of them
+        leds[n].r = r; leds[n].g = g; leds[n].b = b;
+    }
+}
+
+void displayLEDs(void)
+{
+  //    ws2811_showRGB();
+}
+
+//
+// updateLEDs() is the main user-land function that:
+// - periodically calls the rgb fader code to fade any actively moving colors
+// - controls sequencing of a light pattern, if playing
+// - triggers pattern playing on USB disconnect
+//
+void updateLEDs(void)
+{
+    uint32_t now = uptime_millis;
+
+    // update LEDs every led_update_millis
+    if( (long)(now - led_update_next) > 0 ) {
+        led_update_next += led_update_millis;
+
+        rgb_updateCurrent();  // playing=3 => direct LED addressing (not anymore)
+        displayLEDs();
+    }
+}
+
+//
+//
+//
+int main()
+{
+  // Runs the Silicon Labs chip initialisation stuff, that also deals with
+  // errata (implements workarounds, etc).
+  CHIP_Init();
+  
+  // Disable the watchdog that the bootloader started.
+  WDOG->CTRL = 0;
+  
+  // Switch on the clock for GPIO. Even though there's no immediately obvious
+  // timing stuff going on beyond the SysTick below, it still needs to be
+  // enabled for the GPIO to work.
+  CMU_ClockEnable(cmuClock_GPIO, true);
+  
+  // Sets up and enable the `SysTick_Handler' interrupt to fire once every 1ms.
+  // ref: http://community.silabs.com/t5/Official-Blog-of-Silicon-Labs/Chapter-5-MCU-Clocking-Part-2-The-SysTick-Interrupt/ba-p/145297
+  if (SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 1000)) {
+    // Something went wrong.
+    while (1);
+  }
+  
+  setupLeuart();
+  
+  write_str("startup...\n");
+  
+  GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
+  GPIO_PinModeSet(gpioPortF, 5, gpioModePushPull, 0);
+  
+  // Enable the capacitive touch sensor. Remember, this consumes TIMER0 and
+  // TIMER1, so those are off-limits to us.
+  //CAPSENSE_Init();
+
+  makeSerialNumber();
+  
+  hidDescriptor = (void*) USBDESC_HidDescriptor; // FIXME
+  
+  // Enable the USB controller. Remember, this consumes TIMER2 as per
+  // -DUSB_TIMER=USB_TIMER2 in Makefile because TIMER0 and TIMER1 are already
+  // taken by the capacitive touch sensors.
+  USBD_Init(&initstruct);
+
+  #if 0
+  // When using a debugger it is practical to uncomment the following three
+  // lines to force host to re-enumerate the device.
+  USBD_Disconnect();      
+  USBTIMER_DelayMs(1000); 
+  USBD_Connect();         
+  #endif
+
+  while(1) {
+
+    updateLEDs();
+    updateMisc();
+    
+  }
+}
+  
+
+    
 /**
  * handleMessage(char* inbuf) -- main command router
  *
@@ -244,13 +318,71 @@ static void handleMessage(uint8_t reportId)
   uint8_t count = (reportId==REPORT_ID) ? REPORT_COUNT : REPORT2_COUNT;
   memcpy( (void*)reportToSend, (void*)inbuf, count);
   
-  uint8_t cmd = inbuf[1];
-  
-  // 1, 76, 0, 0, ...
-  if( cmd == 'v' ) {
+  uint8_t cmd;
+  rgb_t c; // we need this for many commands so pre-parse it
+  cmd = inbuf[1];
+  c.r = inbuf[2];
+  c.g = inbuf[3];
+  c.b = inbuf[4];
+
+  // Fade to RGB color - { 1,'c', r,g,b, th,tl, ledn }
+  // where t = number of 10msec ticks
+  if(      cmd == 'c' ) {
+    uint16_t dmillis = (inbuf[5] << 8) | inbuf[6];
+    uint8_t ledn = inbuf[7];          // which LED to address
+    //playing = 0;
+    rgb_setDest(&c, dmillis, ledn);
+  }
+  // set RGB color immediately  - {1,'n', r,g,b, 0,0,0 }
+  else if( cmd == 'n' ) {
+    uint8_t ledn = inbuf[7];          // which LED to address
+    // playing = 0;
+    if( ledn > 0 ) {
+      //playing = 3;                   // FIXME: wtf non-semantic 3
+      setLED( c.r, c.g, c.b, ledn ); // FIXME: no fading
+    }
+    else {
+      rgb_setDest( &c, 0, 0 );
+      rgb_setCurr( &c );  // FIXME: no LED arg
+    }    
+  }
+  //  Read current color - { 1,'r', 0,0,0,   0,0, 0}
+  else if( cmd == 'r' ) {
+    uint8_t ledn = inbuf[7];          // which LED to address
+    if( ledn > 0 ) ledn--;
+    reportToSend[2] = leds[ledn].r;
+    reportToSend[3] = leds[ledn].g;
+    reportToSend[4] = leds[ledn].b;
+    reportToSend[5] = 0;
+    reportToSend[6] = 0;
+    reportToSend[7] = ledn;
+  }
+  // play/pause, with position  - {1,'p', play,pos, 0,0,0,0}
+  else if( cmd == 'p' ) {
+    
+  }
+  // write color pattern entry - {1,'P', r,g,b, th,tl, p}
+  else if( cmd == 'P' ) {
+    
+  }
+  // read color pattern entry - {1,'R', 0,0,0, 0,0, pos}
+  else if( cmd == 'R' ) {
+    
+  }
+  else if( cmd == 'v' ) {
     GPIO_PinOutSet(gpioPortF, 5);
-    reportToSend[3] = '2';
-    reportToSend[4] = '1';
+    reportToSend[3] = blink1_version_major;
+    reportToSend[4] = blink1_version_minor;
+  }
+  else if( cmd == '!' ) {  // testtest
+    sprintf(dbgstr, "ms:%ld", uptime_millis);
+    write_str(dbgstr);
+    reportToSend[2] = 0x55;
+    reportToSend[3] = 0xAA;
+    reportToSend[4] = (uint8_t)(uptime_millis >> 24);
+    reportToSend[5] = (uint8_t)(uptime_millis >> 16);
+    reportToSend[6] = (uint8_t)(uptime_millis >> 8);
+    reportToSend[7] = (uint8_t)(uptime_millis >> 0);
   }
   
 }
@@ -349,8 +481,8 @@ int setupCmd(const USB_Setup_TypeDef *setup)
   
         // Implement the necessary HID class specific commands.           
         switch ( setup->bRequest ) {
+
         case USB_HID_SET_REPORT:           // 0x09, receive data from host
-          
           /*
           if ( ( (setup->wValue >> 8)      == 3)              // FEATURE report 
           if ( ( (setup->wValue >> 8)      == 2)              // OUTPUT report 
@@ -371,7 +503,6 @@ int setupCmd(const USB_Setup_TypeDef *setup)
           break;
 
         case USB_HID_GET_REPORT:           // 0x01, send data to host
-
           /*
           if ( ( (setup->wValue >> 8)       == 1)             // INPUT report  
                && ( (setup->wValue & 0xFF)  == 1)             // Report ID     
