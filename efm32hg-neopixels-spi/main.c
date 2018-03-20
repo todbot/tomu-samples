@@ -23,12 +23,11 @@
 #define DMA_CHANNEL_RX   1
 #define DMA_CHANNELS     2
 
-/* DMA Callback structure */
+// DMA Callback structure 
 DMA_CB_TypeDef spiCallback;
 
-/* Transfer Flags */
+// Transfer Flags 
 volatile bool txActive;
-
 
 
 // The uptime in milliseconds, maintained by the SysTick timer.
@@ -44,7 +43,6 @@ void SysTick_Handler() {
 void SpinDelay(uint32_t millis) {
   // Calculate the time at which we need to finish "sleeping".
   uint32_t sleep_until = uptime_millis + millis;
-  
   // Spin until the requested time has passed.
   while (uptime_millis < sleep_until);
 }
@@ -56,9 +54,9 @@ void setupSysTick() {
   }
 }
 
-/**************************************************************************//**
+/**********************************************************************
  * @brief  Call-back called when transfer is complete
- *****************************************************************************/
+ **********************************************************************/
 void transferComplete(unsigned int channel, bool primary, void *user)
 {
   (void) primary;
@@ -70,27 +68,16 @@ void transferComplete(unsigned int channel, bool primary, void *user)
   }
 }
 
-/**************************************************************************//**
- * @brief  Enabling clocks
- *****************************************************************************/
-void setupCmu(void)
-{  
-  /* Enabling clocks */
-  CMU_ClockEnable(cmuClock_DMA, true);  
-  CMU_ClockEnable(cmuClock_GPIO, true);  
-  CMU_ClockEnable(cmuClock_USART0, true);  
-}
-
-/**************************************************************************//**
+/**********************************************************************
  * @brief  Setup SPI as Master
- *****************************************************************************/
+ **********************************************************************/
 void setupSpi(void)
 {
   USART_InitSync_TypeDef usartInit = USART_INITSYNC_DEFAULT;  
   
   // Initialize SPI 
   usartInit.databits = usartDatabits12;
-  usartInit.baudrate = 2400000;
+  usartInit.baudrate = 2400000; // 2.4MHz
   usartInit.msbf = true;
 
   USART_InitSync(USART0, &usartInit);
@@ -98,7 +85,8 @@ void setupSpi(void)
   // Enable SPI transmit and receive 
   USART_Enable(USART0, usartEnable);
   
-  // Configure GPIO pins for SPI 
+  // Configure GPIO pins for SPI
+  // These are the values on the EFM32HG dev board
   GPIO_PinModeSet(gpioPortE, 12, gpioModePushPull, 0); // CLK
   GPIO_PinModeSet(gpioPortE, 10, gpioModePushPull, 0); // MOSI 
  
@@ -109,39 +97,38 @@ void setupSpi(void)
 }
 
 
-/**************************************************************************//**
+/**********************************************************************
  * @brief Configure DMA in basic mode for both TX and RX to/from USART
- *****************************************************************************/
+ **********************************************************************/
 void setupDma(void)
 {
-  /* Initialization structs */ 
+  // Initialization structs
   DMA_Init_TypeDef        dmaInit;
   DMA_CfgChannel_TypeDef  txChnlCfg;
   DMA_CfgDescr_TypeDef    txDescrCfg;
   
-  /* Initializing the DMA */
+  // Initializing the DMA 
   dmaInit.hprot        = 0;
   dmaInit.controlBlock = dmaControlBlock;
   DMA_Init(&dmaInit);
   
-  /* Setup call-back function */  
+  // Setup call-back function 
   spiCallback.cbFunc  = transferComplete;
   spiCallback.userPtr = NULL;
-  
 
   /*** Setting up TX DMA ***/
 
-  /* Setting up channel */
+  // Setting up channel 
   txChnlCfg.highPri   = false;
   txChnlCfg.enableInt = true;
   txChnlCfg.select    = DMAREQ_USART0_TXBL;
   txChnlCfg.cb        = &spiCallback;
   DMA_CfgChannel(DMA_CHANNEL_TX, &txChnlCfg);
 
-  /* Setting up channel descriptor */
+  // Setting up channel descriptor 
   txDescrCfg.dstInc  = dmaDataIncNone;
-  txDescrCfg.srcInc  = dmaDataInc2;
-  txDescrCfg.size    = dmaDataSize2;
+  txDescrCfg.srcInc  = dmaDataInc2;  // Note double-wide
+  txDescrCfg.size    = dmaDataSize2; // Note double-wide
   txDescrCfg.arbRate = dmaArbitrate1;
   txDescrCfg.hprot   = 0;
   DMA_CfgDescr(DMA_CHANNEL_TX, true, &txDescrCfg);
@@ -160,15 +147,14 @@ void spiDmaTransferOut2(uint8_t *txBuffer, int count)
   DMA_ActivateBasic(DMA_CHANNEL_TX,
                     true,
                     false,
-                    (void *)&(USART0->TXDOUBLE),
+                    (void *)&(USART0->TXDOUBLE), // Note double-wide
                     txBuffer,
                     count - 1);
 }
 
-
-/**************************************************************************//**
+/**********************************************************************
  * @brief  Returns if an SPI transfer is active
- *****************************************************************************/
+ **********************************************************************/
 bool spiDmaIsActive(void)
 {
   bool temp;
@@ -176,10 +162,9 @@ bool spiDmaIsActive(void)
   return temp;
 }
 
-
-/**************************************************************************//**
+/***********************************************************************
  * @brief  Sleep in EM1 until DMA transfer is done
- *****************************************************************************/
+ ***********************************************************************/
 void sleepUntilDmaDone(void)
 {
   /* Enter EM1 while DMA transfer is active to save power. Note that
@@ -220,53 +205,31 @@ typedef struct {
 // this idea from JeeLabs:
 // https://jeelabs.org/book/1450d/
 
-/*
-// @ 4MHz, 5-bits for each ws2812 bit
-// ws2812 0 bit = 0b10000
-// ws2812 1 bit = 0b11110
-// 15 bits carry 3 ws2812 bits
-// => 45 bits carry 6 ws bits
-// => 90 bits carry 12 ws bits
-// 10 bits carry 2 ws2812 bits
-// => 20 bits c
-// concept from: https://www.pjrc.com/non-blocking-ws2812-led-library/
-// (but SPI instead of UART because we can't invert the output?)
-// NAH FORGET THIS: look up 'TXINV' in USARTn_CTRL
-static const uint16_t bits4M[] = {
-  0b100001000010000, // => 0b000
-  0b100001000011110, // => 0b001
-  0b100001111010000, // => 0b010
-  0b100001111011110, // => 0b011
-  0b111101000010000, // => 0b100
-  0b111101000011110, // => 0b101
-  0b111101111010000, // => 0b110
-  0b111101111011110, // => 0b111
-};
-*/
 // @ 2.4MHz, 3 bits for each ws2812 bit
 // ws2812 0 bit = 0b10000
 // ws2812 1 bit = 0b11110
-// 12 bits carry 4 ws2812 bits
+// => 12 bits carry 4 ws2812 bits
+// To send one ws2812 byte, send two 12-bit transfers
 // concept from: https://jeelabs.org/book/1450d/
 static const uint16_t bits[] = {
-    0b100100100100,
-    0b100100100110,
-    0b100100110100,
-    0b100100110110,
-    0b100110100100,
-    0b100110100110,
-    0b100110110100,
-    0b100110110110,
-    0b110100100100,
-    0b110100100110,
-    0b110100110100,
-    0b110100110110,
-    0b110110100100,
-    0b110110100110,
-    0b110110110100,
-    0b110110110110,
+    0b100100100100, // => 0b0000 in ws2812 bits
+    0b100100100110, // => 0b0001 in ws2812 bits
+    0b100100110100, // => 0b0010 in ws2812 bits
+    0b100100110110, // => 0b0011 in ws2812 bits
+    0b100110100100, // => 0b0100 in ws2812 bits
+    0b100110100110, // => 0b0101 in ws2812 bits
+    0b100110110100, // => 0b0110 in ws2812 bits
+    0b100110110110, // => 0b0111 in ws2812 bits
+    0b110100100100, // => 0b1000 in ws2812 bits
+    0b110100100110, // => 0b1001 in ws2812 bits
+    0b110100110100, // => 0b1010 in ws2812 bits
+    0b110100110110, // => 0b1011 in ws2812 bits
+    0b110110100100, // => 0b1100 in ws2812 bits
+    0b110110100110, // => 0b1101 in ws2812 bits
+    0b110110110100, // => 0b1110 in ws2812 bits
+    0b110110110110, // => 0b1111 in ws2812 bits
 };
-
+// note double-wide
 #define spiSend(x) USART_TxDouble( USART0, x)
 
 static void sendByte (int value)
@@ -343,7 +306,7 @@ int main(void)
     SpinDelay(100);
   }
   
-  
+  /*  
   // more tests
   const uint16_t spiTxData2[] = {
                                 0b000000000010,
@@ -354,22 +317,46 @@ int main(void)
                                 0x0456, 0x0DEF, 0x0ABA, 0x0CAB, 0x0B0B };
   int spiTxData2Len = (sizeof(spiTxData2)/sizeof(uint16_t));
 
-
   // Configure DMA transfer from RAM to SPI using ping-pong
   setupDma();
 
   while( 1 ) {
     // Send data out
-    //spiDmaTransferOut2((uint8_t*) spiTxData2, spiTxData2Len);
-  
+    spiDmaTransferOut2((uint8_t*) spiTxData2, spiTxData2Len);
     // Sleep until DMA is done 
     sleepUntilDmaDone();
   }
+
+  */
   
- 
   // Cleaning up after DMA transfers 
   DMA_Reset();
 
   // Done 
   while (1);
 }
+
+// Alternate idea:
+/*
+// @ 4MHz, 5-bits for each ws2812 bit
+// ws2812 0 bit = 0b10000
+// ws2812 1 bit = 0b11110
+// 15 bits carry 3 ws2812 bits
+// => 45 bits carry 6 ws bits
+// => 90 bits carry 12 ws bits
+// 10 bits carry 2 ws2812 bits
+// => 20 bits c
+// concept from: https://www.pjrc.com/non-blocking-ws2812-led-library/
+// (but SPI instead of UART because we can't invert the output?)
+// NAH FORGET THIS: look up 'TXINV' in USARTn_CTRL
+static const uint16_t bits4M[] = {
+  0b100001000010000, // => 0b000
+  0b100001000011110, // => 0b001
+  0b100001111010000, // => 0b010
+  0b100001111011110, // => 0b011
+  0b111101000010000, // => 0b100
+  0b111101000011110, // => 0b101
+  0b111101111010000, // => 0b110
+  0b111101111011110, // => 0b111
+};
+*/

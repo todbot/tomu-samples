@@ -43,11 +43,11 @@ LSCRIPT = ../tomu-nobootloader.ld
 #
 # PHONY TARGETS
 #
-.PHONY: all blinky-usb check clean
+.PHONY: all blinky check clean
 
-all: blinky-usb
+all: blinky
 
-blinky-usb: blinky-usb.bin blinky-usb.dump blinky-usb.elf
+blinky: blinky.bin blinky.dump blinky.elf
 
 check:
 	@echo "Checking Gecko SDK linker script $(LSCRIPT) to ensure FLASH ORIGIN is set to 0x00004000..."
@@ -113,13 +113,13 @@ BLINKY_OBJ = $(patsubst %.S,%.o,$(BLINKY_A_SRC)) $(patsubst %.c,%.o,$(BLINKY_C_S
 #
 # REAL TARGETS // CLEAN
 #
-blinky-usb.dump: blinky-usb.elf
+blinky.dump: blinky.elf
 	$(Q_OBJDUMP)$(OBJDUMP) -Sx $^ > $@
 
-blinky-usb.elf: $(BLINKY_OBJ) $(GECKO_OBJ)
-	$(Q_CC)$(CC) -Xlinker -Map=blinky-usb.map $(LFLAGS) -o $@ $^
+blinky.elf: $(BLINKY_OBJ) $(GECKO_OBJ)
+	$(Q_CC)$(CC) -Xlinker -Map=blinky.map $(LFLAGS) -o $@ $^
 
-blinky-usb.bin: blinky-usb.elf
+blinky.bin: blinky.elf
 	$(Q_OBJCOPY)$(OBJCOPY) -O binary $< $@
 
 program-jlink:
