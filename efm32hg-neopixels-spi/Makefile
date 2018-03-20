@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+TARGET=blinky-neopixel-spi
 
 # Use make V=1 for a verbose build.
 ifndef V
@@ -43,11 +44,11 @@ LSCRIPT = ../tomu-nobootloader.ld
 #
 # PHONY TARGETS
 #
-.PHONY: all blinky check clean
+.PHONY: all build check clean
 
-all: blinky
+all: build
 
-blinky: blinky.bin blinky.dump blinky.elf
+build: $(TARGET).bin $(TARGET).dump $(TARGET).elf
 
 check:
 	@echo "Checking Gecko SDK linker script $(LSCRIPT) to ensure FLASH ORIGIN is set to 0x00004000..."
@@ -113,14 +114,18 @@ BLINKY_OBJ = $(patsubst %.S,%.o,$(BLINKY_A_SRC)) $(patsubst %.c,%.o,$(BLINKY_C_S
 #
 # REAL TARGETS // CLEAN
 #
-blinky.dump: blinky.elf
+$(TARGET).dump: $(TARGET).elf
 	$(Q_OBJDUMP)$(OBJDUMP) -Sx $^ > $@
 
-blinky.elf: $(BLINKY_OBJ) $(GECKO_OBJ)
-	$(Q_CC)$(CC) -Xlinker -Map=blinky.map $(LFLAGS) -o $@ $^
+$(TARGET).elf: $(BLINKY_OBJ) $(GECKO_OBJ)
+	$(Q_CC)$(CC) -Xlinker -Map=$(TARGET).map $(LFLAGS) -o $@ $^
 
-blinky.bin: blinky.elf
+$(TARGET).bin: $(TARGET).elf
 	$(Q_OBJCOPY)$(OBJCOPY) -O binary $< $@
 
 program-jlink:
+	cp $(TARGET).bin output.bin
 	jlinkexe -commanderscript ./jlinkscript.txt
+
+program-openocd:
+	openocd -f ./openocd.cfg -c "program $(TARGET).elf verify reset exit"

@@ -2,7 +2,7 @@ si 1
 speed 4000
 device EFM32HG322F64
 //erase
-loadbin blinky.bin,0
+loadbin output.bin,0
 r
 g
 exit
