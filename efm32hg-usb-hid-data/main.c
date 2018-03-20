@@ -12,11 +12,15 @@
 #include "em_wdog.h"
 #include "em_system.h"
 #include <em_leuart.h>
+#include <em_usart.h>
+#include <em_core.h>
 
 #include <stdio.h>
 
 #include "callbacks.h"
 #include "descriptors.h"
+
+#define UNUSED     __attribute__ ((unused))
 
 #define blink1_version_major '3'
 #define blink1_version_minor '1'
@@ -50,6 +54,20 @@ char dbgstr[30];
 // next time
 const uint32_t led_update_millis = 10;  // tick msec
 uint32_t led_update_next;
+uint32_t lastmiscmillis;
+
+static void  *hidDescriptor = NULL;
+
+// the report received from the host
+// could be REPORT_COUNT or REPORT2_COUNT long
+// first byte is reportId
+static uint8_t  inbuf[REPORT2_COUNT];
+
+// The report to send to the host (only on reportId 1)
+// generally it's a copy of the last report received
+SL_ALIGN(4)
+static uint8_t reportToSend[REPORT_COUNT] SL_ATTRIBUTE_ALIGN(4);
+
 
 int setupCmd(const USB_Setup_TypeDef *setup);
 
@@ -96,52 +114,106 @@ void SpinDelay(uint32_t millis) {
 }
 
 
-static void  *hidDescriptor = NULL;
-
-// the report received from the host
-// could be REPORT_COUNT or REPORT2_COUNT long
-// first byte is reportId
-static uint8_t  inbuf[REPORT2_COUNT];
-
-// The report to send to the host (only on reportId 1)
-// generally it's a copy of the last report received
-SL_ALIGN(4)
-static uint8_t reportToSend[REPORT_COUNT] SL_ATTRIBUTE_ALIGN(4);
-
-
-
-/**
- * Modify 'iSerialNumber' string to be based on chip's unique Id
- */
-static void makeSerialNumber()
+/**********************************************************************
+ * @brief  Setup USART0 SPI as Master
+ **********************************************************************/
+void setupSpi(void)
 {
-  uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
+  USART_InitSync_TypeDef usartInit = USART_INITSYNC_DEFAULT;  
   
-  char serbuf[17];
-  sprintf(serbuf, "3%8.8lx", (uint32_t)uniqid ); // '3' means mk3, cast 64-bit to 32-bit to use lower 32bit
-  //sprintf(serbuf, "%16.16llx", uniqid);
-  //write_str("uniqid:");write_str(serbuf);
-  //write_str("serbuf:");write_str(serbuf);
+  // Initialize SPI 
+  usartInit.databits = usartDatabits12;
+  usartInit.baudrate = 2400000; // 2.4MHz
+  usartInit.msbf = true;
 
-  // FIXME:
-  iSerialNumber[2]  = serbuf[0]; // mk3
-  iSerialNumber[4]  = serbuf[1];
-  iSerialNumber[6]  = serbuf[2];
-  iSerialNumber[8]  = serbuf[3];
-  iSerialNumber[10] = serbuf[4];
-  iSerialNumber[12] = serbuf[5];
-  iSerialNumber[14] = serbuf[6];
-  iSerialNumber[16] = serbuf[7];
+  USART_InitSync(USART0, &usartInit);
+  
+  // Enable SPI transmit and receive 
+  USART_Enable(USART0, usartEnable);
+  
+  // Configure GPIO pins for SPI
+  // These are the values on the EFM32HG dev board
+  GPIO_PinModeSet(gpioPortE, 12, gpioModePushPull, 0); // CLK
+  GPIO_PinModeSet(gpioPortE, 10, gpioModePushPull, 0); // MOSI 
+ 
+  // Route USART clock and USART TX to LOC0 (PortE12, PortE10)
+  USART0->ROUTE = USART_ROUTE_LOCATION_LOC0 |
+                  USART_ROUTE_CLKPEN |
+                  USART_ROUTE_TXPEN;
 }
 
-uint32_t lastmiscmillis;
+// @ 2.4MHz, 3 bits for each ws2812 bit
+// ws2812 0 bit = 0b10000
+// ws2812 1 bit = 0b11110
+// => 12 bits carry 4 ws2812 bits
+// To send one ws2812 byte, send two 12-bit transfers
+// concept from: https://jeelabs.org/book/1450d/
+static const uint16_t bits[] = {
+    0b100100100100, // => 0b0000 in ws2812 bits
+    0b100100100110, // => 0b0001 in ws2812 bits
+    0b100100110100, // => 0b0010 in ws2812 bits
+    0b100100110110, // => 0b0011 in ws2812 bits
+    0b100110100100, // => 0b0100 in ws2812 bits
+    0b100110100110, // => 0b0101 in ws2812 bits
+    0b100110110100, // => 0b0110 in ws2812 bits
+    0b100110110110, // => 0b0111 in ws2812 bits
+    0b110100100100, // => 0b1000 in ws2812 bits
+    0b110100100110, // => 0b1001 in ws2812 bits
+    0b110100110100, // => 0b1010 in ws2812 bits
+    0b110100110110, // => 0b1011 in ws2812 bits
+    0b110110100100, // => 0b1100 in ws2812 bits
+    0b110110100110, // => 0b1101 in ws2812 bits
+    0b110110110100, // => 0b1110 in ws2812 bits
+    0b110110110110, // => 0b1111 in ws2812 bits
+};
+
+
+// note double-wide
+#define spiSend(x) USART_TxDouble( USART0, x)
+
+/****
+ *
+ ****/
+static inline void sendByte (int value)
+{
+    spiSend( bits[value >> 4] );
+    spiSend( bits[value & 0xF] );
+}
+
+UNUSED static inline void sendRGB (int r, int g, int b)
+{
+    sendByte(g);
+    sendByte(r);
+    sendByte(b);
+}
+
+/****
+ *
+ ****/
+static void sendLEDs(rgb_t* leds, int num)
+{
+  CORE_irqState_t is = CORE_EnterCritical();
+  for( int i=0; i<num; i++ ) {
+    sendByte( leds[i].g );
+    sendByte( leds[i].r );
+    sendByte( leds[i].b );
+  }
+  CORE_ExitCritical(is);
+  // delay at least 50usec
+}
+
+
+
+/**********************************************************************
+ * 
+ **********************************************************************/
 void updateMisc()
 {
   if( (uptime_millis - lastmiscmillis) > 500 ) {
     lastmiscmillis = uptime_millis;
     write_char('.');
-    //SpinDelay(500);
   }
+  
   /*
     // Capture/sample the state of the capacitive touch sensors.
     CAPSENSE_Sense();
@@ -175,7 +247,9 @@ void updateMisc()
 
 // -------- LED & color pattern handling -------------------------------------
 //
-// actually set the color of a particular LED, or all of them
+/**
+ * actually set the color of a particular LED, or all of them
+ **/
 void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n)
 {
     if (n == 255) { // all of them
@@ -188,10 +262,15 @@ void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n)
     }
 }
 
+/**
+ *
+ */
 void displayLEDs(void)
 {
-  //    ws2811_showRGB();
+  // ws2811_showRGB();
+  sendLEDs( leds, nLEDs );
 }
+
 
 //
 // updateLEDs() is the main user-land function that:
@@ -212,9 +291,33 @@ void updateLEDs(void)
     }
 }
 
-//
-//
-//
+/**********************************************************************
+ * @brief Modify 'iSerialNumber' string to be based on chip's unique Id
+ **********************************************************************/
+static void makeSerialNumber()
+{
+  uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
+  
+  char serbuf[17];
+  sprintf(serbuf, "3%8.8lx", (uint32_t)uniqid ); // '3' means mk3, cast 64-bit to 32-bit to use lower 32bit
+  //sprintf(serbuf, "%16.16llx", uniqid);
+  //write_str("uniqid:");write_str(serbuf);
+  //write_str("serbuf:");write_str(serbuf);
+
+  // FIXME:
+  iSerialNumber[2]  = serbuf[0]; // mk3
+  iSerialNumber[4]  = serbuf[1];
+  iSerialNumber[6]  = serbuf[2];
+  iSerialNumber[8]  = serbuf[3];
+  iSerialNumber[10] = serbuf[4];
+  iSerialNumber[12] = serbuf[5];
+  iSerialNumber[14] = serbuf[6];
+  iSerialNumber[16] = serbuf[7];
+}
+
+/**********************************************************************
+ * 
+ **********************************************************************/
 int main()
 {
   // Runs the Silicon Labs chip initialisation stuff, that also deals with
@@ -224,6 +327,8 @@ int main()
   // Disable the watchdog that the bootloader started.
   WDOG->CTRL = 0;
   
+  //CMU_ClockEnable(cmuClock_DMA, true);  
+  CMU_ClockEnable(cmuClock_USART0, true);  
   // Switch on the clock for GPIO. Even though there's no immediately obvious
   // timing stuff going on beyond the SysTick below, it still needs to be
   // enabled for the GPIO to work.
@@ -235,6 +340,8 @@ int main()
     // Something went wrong.
     while (1);
   }
+  
+  setupSpi();
   
   setupLeuart();
   
