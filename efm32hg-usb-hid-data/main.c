@@ -148,7 +148,8 @@ void setupSpi(void)
 // => 12 bits carry 4 ws2812 bits
 // To send one ws2812 byte, send two 12-bit transfers
 // concept from: https://jeelabs.org/book/1450d/
-static const uint16_t bits[] = {
+static const uint16_t bits[] =
+  {
     0b100100100100, // => 0b0000 in ws2812 bits
     0b100100100110, // => 0b0001 in ws2812 bits
     0b100100110100, // => 0b0010 in ws2812 bits
@@ -165,35 +166,29 @@ static const uint16_t bits[] = {
     0b110110100110, // => 0b1101 in ws2812 bits
     0b110110110100, // => 0b1110 in ws2812 bits
     0b110110110110, // => 0b1111 in ws2812 bits
-};
+  };
 
 
 // note double-wide
 #define spiSend(x) USART_TxDouble( USART0, x)
 
-/****
+/**********************************************************************
  *
- ****/
+ **********************************************************************/
 static inline void sendByte (int value)
 {
     spiSend( bits[value >> 4] );
     spiSend( bits[value & 0xF] );
 }
 
-UNUSED static inline void sendRGB (int r, int g, int b)
-{
-    sendByte(g);
-    sendByte(r);
-    sendByte(b);
-}
-
-/****
- *
- ****/
+/**********************************************************************
+ * @brief Send LED data out via SPI, disables interrupts
+ **********************************************************************/
 static void sendLEDs(rgb_t* leds, int num)
 {
   CORE_irqState_t is = CORE_EnterCritical();
   for( int i=0; i<num; i++ ) {
+    // send out GRB data
     sendByte( leds[i].g );
     sendByte( leds[i].r );
     sendByte( leds[i].b );
@@ -247,9 +242,18 @@ void updateMisc()
 
 // -------- LED & color pattern handling -------------------------------------
 //
-/**
- * actually set the color of a particular LED, or all of them
- **/
+
+/**********************************************************************
+ * @brief Send LED data out to LEDs
+ **********************************************************************/
+void displayLEDs(void)
+{
+  sendLEDs( leds, nLEDs );    // ws2811_showRGB();
+}
+
+/**********************************************************************
+ * @brief Set the color of a particular LED, or all of them
+ **********************************************************************/
 void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n)
 {
     if (n == 255) { // all of them
@@ -262,22 +266,15 @@ void setLED(uint8_t r, uint8_t g, uint8_t b, uint8_t n)
     }
 }
 
-/**
+
+
+/**********************************************************************
+ * updateLEDs() is the main user-land function that:
+ * - periodically calls the rgb fader code to fade any actively moving colors
+ * - controls sequencing of a light pattern, if playing
+ * - triggers pattern playing on USB disconnect
  *
- */
-void displayLEDs(void)
-{
-  // ws2811_showRGB();
-  sendLEDs( leds, nLEDs );
-}
-
-
-//
-// updateLEDs() is the main user-land function that:
-// - periodically calls the rgb fader code to fade any actively moving colors
-// - controls sequencing of a light pattern, if playing
-// - triggers pattern playing on USB disconnect
-//
+ **********************************************************************/
 void updateLEDs(void)
 {
     uint32_t now = uptime_millis;
@@ -296,17 +293,18 @@ void updateLEDs(void)
  **********************************************************************/
 static void makeSerialNumber()
 {
-  uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use 32-bits
+  uint64_t uniqid = SYSTEM_GetUnique(); // is 64-bit but we'll only use lower 32-bits
   
   char serbuf[17];
-  sprintf(serbuf, "3%8.8lx", (uint32_t)uniqid ); // '3' means mk3, cast 64-bit to 32-bit to use lower 32bit
+  // '3' means mk3, cast 64-bit to 32-bit to use lower 32bit
+  sprintf(serbuf, "3%8.8lx", (uint32_t)uniqid ); 
   //sprintf(serbuf, "%16.16llx", uniqid);
   //write_str("uniqid:");write_str(serbuf);
   //write_str("serbuf:");write_str(serbuf);
 
-  // FIXME:
+  // FIXME: hack to map ASCII to UTF-16LE
   iSerialNumber[2]  = serbuf[0]; // mk3
-  iSerialNumber[4]  = serbuf[1];
+  iSerialNumber[4]  = serbuf[1]; // 7 chars of unique id
   iSerialNumber[6]  = serbuf[2];
   iSerialNumber[8]  = serbuf[3];
   iSerialNumber[10] = serbuf[4];
@@ -347,6 +345,7 @@ int main()
   
   write_str("startup...\n");
   
+  // debug LEDs on dev board
   GPIO_PinModeSet(gpioPortF, 4, gpioModePushPull, 0);
   GPIO_PinModeSet(gpioPortF, 5, gpioModePushPull, 0);
   
