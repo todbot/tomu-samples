@@ -16,7 +16,7 @@
 #include "em_dma.h"
 #include "em_cmu.h"
 #include "em_emu.h"
-//#include "em_int.h"
+#include <em_core.h>
 #include "dmactrl.h"
 
 #define DMA_CHANNEL_TX   0
@@ -26,7 +26,7 @@
 // DMA Callback structure 
 DMA_CB_TypeDef dmaCallback;
 
-// DMA Transfer Flags 
+// DMA Transfer Flag 
 volatile bool txActive;
 
 
@@ -121,16 +121,14 @@ void setupDma(void)
   dmaCallback.cbFunc  = transferComplete;
   dmaCallback.userPtr = NULL;
 
-  /*** Setting up TX DMA ***/
-
-  // Setting up channel 
+  // Setting up TX channel 
   txChnlCfg.highPri   = false;
   txChnlCfg.enableInt = true;
   txChnlCfg.select    = DMAREQ_USART0_TXBL;
   txChnlCfg.cb        = &dmaCallback;
   DMA_CfgChannel(DMA_CHANNEL_TX, &txChnlCfg);
 
-  // Setting up channel descriptor 
+  // Setting up TX channel descriptor 
   txDescrCfg.dstInc  = dmaDataIncNone;
   txDescrCfg.srcInc  = dmaDataInc1;
   txDescrCfg.size    = dmaDataSize1;
@@ -189,11 +187,13 @@ void sleepUntilDmaDone(void)
   bool isActive = false;
   
   while(1) {
-    // INT_Disable();  // FIXME
+    // INT_Disable();  
+    CORE_irqState_t is = CORE_EnterCritical();
     isActive = dmaIsActive();
     if ( isActive ) {
       EMU_EnterEM1(); 
     }
+    CORE_ExitCritical(is);
     //INT_Enable();
     
     /* Exit the loop if transfer has completed */
@@ -204,9 +204,15 @@ void sleepUntilDmaDone(void)
 }
 
 
-#define nLEDs 18
-uint8_t drawBuffer[nLEDs*3]; //  3 bytes per RGB LED
-uint8_t frameBuffer[nLEDs * 12]; // 12 bytes per RGB LED
+typedef struct {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+} rgb_t;
+
+#define nLEDs 8
+rgb_t drawBuffer[nLEDs]; //  3 bytes per RGB LED
+uint8_t frameBuffer[nLEDs*3*4]; // 12 bytes per RGB LED
 
 // this code from: https://www.pjrc.com/non-blocking-ws2812-led-library/
 // and https://github.com/PaulStoffregen/WS2812Serial
@@ -214,29 +220,29 @@ uint8_t frameBuffer[nLEDs * 12]; // 12 bytes per RGB LED
 // WS2812Serial::clear()
 void clearLEDs()
 {
-  memset(drawBuffer, 0, nLEDs * 3);
+  memset(drawBuffer, 0, nLEDs * sizeof(rgb_t));
 } 	
 
 // WS2812Serial::setPixel()
 void setLED(uint32_t num, uint8_t red, uint8_t green, uint8_t blue)
 {
 		if (num >= nLEDs) return;
-		num *= 3;
-		drawBuffer[num+0] = blue;
-		drawBuffer[num+1] = green;
-		drawBuffer[num+2] = red;
+		drawBuffer[num].r = red;
+		drawBuffer[num].g = green;
+		drawBuffer[num].b = blue;
 }
 // WS2812Serial::show()
 static void showLEDs()
 {
 	// copy drawing buffer to frame buffer
-	const uint8_t *p = drawBuffer;
+	const uint8_t *p = (uint8_t*)drawBuffer;
 	const uint8_t *end = p + (nLEDs * 3);
 	uint8_t *fb = frameBuffer;
 	while (p < end) {
-		uint8_t b = *p++;
+		uint8_t r = *p++; // FIXME: assuming rgb_t aligned
 		uint8_t g = *p++;
-		uint8_t r = *p++;
+		uint8_t b = *p++;
+    // color ordering of our LEDs is GRB
 		uint32_t n  = n = (g << 16) | (r << 8) | b;
 		const uint8_t *stop = fb + 12;
 		do {
@@ -272,17 +278,17 @@ int main(void)
 
   GPIO_PinOutSet(gpioPortF, 4);  // say we are alive
 
-  // configure USART0
-  setupSerialPort();
-
   // configure SysTick handler for millis 
   setupSysTick();
+
+  // configure USART0
+  setupSerialPort();
 
   // Configure DMA transfer from RAM to SPI using ping-pong
   setupDma();
   
   /*
-  // just playing around, testing scope can resolve this
+  // just playing around, testing if oscilloscope can resolve this
   while(1) {
     for( uint8_t c = 'a'; c< 'z'; c++)  {
       GPIO_PinOutSet(gpioPortF, 5);
@@ -301,6 +307,13 @@ int main(void)
   }
   */
 
+  for( int i=0; i< nLEDs; i++) {
+    setLED( i, 0,0,0 );
+  }
+  showLEDs();
+  sleepUntilDmaDone();
+  SpinDelay(1000);
+  
   setLED( 0, 0x40, 0x00, 0x00 );
   setLED( 1, 0x00, 0x40, 0x00 );
   setLED( 2, 0x00, 0x00, 0x40 );
@@ -311,9 +324,15 @@ int main(void)
   setLED( 7, 0x00, 0x00, 0x00 );
 
   while( 1 ) {
+    rgb_t l = drawBuffer[0];
+    for( int i=1; i< nLEDs; i++ ) {
+      drawBuffer[i-1] = drawBuffer[i];
+    }
+    drawBuffer[nLEDs-1] = l;
+    
     showLEDs();
     sleepUntilDmaDone();
-    SpinDelay(10);
+    SpinDelay(300);
   }
 
    
