@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import sys
 import usb.core
@@ -12,6 +12,8 @@ dev = usb.core.find(idVendor=0x10c4, idProduct=0x4711)
 if dev is None:
     raise ValueError('Tomu not found')
 
+dev.set_configuration()
+    
 bytes = dev.write(0x01, data, 0)
 data = dev.read(0x81, bytes, 0)
 print("Tomu returned '" + data.tostring().decode("utf-8") + "'")
