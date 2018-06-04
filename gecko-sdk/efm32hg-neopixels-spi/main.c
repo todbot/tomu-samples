@@ -77,7 +77,8 @@ void setupSpi(void)
   
   // Initialize SPI 
   usartInit.databits = usartDatabits12;
-  usartInit.baudrate = 2400000; // 2.4MHz
+  //usartInit.baudrate = 2400000; // 2.4MHz
+  usartInit.baudrate = 3000000; // 3.0MHz (better for SK6812)
   usartInit.msbf = true;
 
   USART_InitSync(USART0, &usartInit);
